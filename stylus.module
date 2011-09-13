@@ -82,7 +82,7 @@ function stylus_compile($stylesheets) {
       $nib = ' --use /home/oxy/node_modules/nib/lib/nib';
 
       // Generate CSS stylesheet
-      exec('stylus ' . implode($file_paths, " ") . $nib . ' 2>&1', $response);
+      exec('stylus ' . escapeshellcmd(implode($file_paths, " ") . $nib) . ' 2>&1', $response);
 
       drupal_set_message( implode($response, "<br/>") );
     }
