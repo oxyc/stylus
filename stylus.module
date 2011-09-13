@@ -1,0 +1,90 @@
+<?php
+
+function stylus_preprocess_page(&$variables) {
+
+  global $theme_info;
+
+  $development = variable_get('stylus_development_mode', TRUE);
+  $theme_path = drupal_get_path('theme', $theme_info->name);
+
+  // Do we have any stylesheets defined in the theme .info
+  if (isset($theme_info->info['stylus'])) {
+
+    // Read stylesheets from themes .info file
+    $stylus_stylesheets = $theme_info->info['stylus'];
+
+    // Compile only if in development mode
+    if ($development) {
+
+      $compile = array();
+
+      // Iterate through all media types
+      foreach($stylus_stylesheets as $stylesheets) {
+        
+        // Prepends the themes path and adds new path to compile list
+        array_walk($stylesheets, function(&$path) use ($theme_path, &$compile) {
+          if (!empty($path)) {
+            $compile[] = $theme_path . '/' . $path; 
+          }
+        });
+      }
+      
+      // Compile stylesheets
+      stylus_compile($compile);
+    }
+
+    // Iterate through media types
+    foreach($stylus_stylesheets as $media => $stylesheets) { 
+
+      // Add all generated css stylesheets
+      array_walk($stylesheets, function(&$path) use ($theme_path, $media) {
+        drupal_add_css($theme_path . '/' . stylus_css_path($path), array(
+          'group' => CSS_THEME,
+          'every_page' => TRUE,
+          'media' => "$media",
+        ));
+      });
+    }
+  }
+}
+
+function stylus_css_path($path) {
+   return preg_replace("/styl$/", 'css', $path);
+}
+
+function stylus_compile($stylesheets) {
+  
+  // Absolute filesystem path
+  $fs_path = $_SERVER['DOCUMENT_ROOT'] . base_path();
+
+
+  // Checking if we have any stylesheets and if stylus is available
+  if (count($stylesheets) > 0 && strlen(exec('stylus -V') > 0)) {
+
+    $file_paths = array();
+    
+    // Iterate through stylesheets
+    foreach ($stylesheets as $stylus_stylesheet) {
+      $css_stylesheet = stylus_css_path($stylus_stylesheet); 
+
+      // Do we have a css file or has the stylus file been modified after last compile
+      if (true || !file_exists($css_stylesheet) || (file_exists($stylus_stylesheet) && filemtime($stylus_stylesheet) > filemtime($css_stylesheet))) {
+        $file_paths[] = $fs_path . $stylus_stylesheet;
+      }
+    }
+
+    // Are there any files to be compiled
+    if (count($file_paths) > 0) {
+      
+      // Stylus response
+      $response = array();
+      $nib = ' --use /home/oxy/node_modules/nib/lib/nib';
+
+      // Generate CSS stylesheet
+      exec('stylus ' . implode($file_paths, " ") . $nib . ' 2>&1', $response);
+
+      drupal_set_message( implode($response, "<br/>") );
+    }
+  }
+
+}
