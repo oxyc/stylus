@@ -68,9 +68,10 @@ function stylus_compile($stylesheets) {
       $css_stylesheet = stylus_css_path($stylus_stylesheet); 
 
       // Do we have a css file or has the stylus file been modified after last compile
-      if (true || !file_exists($css_stylesheet) || (file_exists($stylus_stylesheet) && filemtime($stylus_stylesheet) > filemtime($css_stylesheet))) {
+      // TODO: Dev mode should ignore this check as some files might be included with @import
+      //if (!file_exists($css_stylesheet) || (file_exists($stylus_stylesheet) && filemtime($stylus_stylesheet) > filemtime($css_stylesheet))) {
         $file_paths[] = $fs_path . $stylus_stylesheet;
-      }
+      //}
     }
 
     // Are there any files to be compiled
