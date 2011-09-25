@@ -1,4 +1,6 @@
-name=Stylus
-description=Support for Node.js Stylus executable. Warning: dev station only
-core=7.x
-version=1.0
+name = "Stylus Preprocessor"
+description = "Support for Node.js Stylus executable. Warning: dev station only"
+
+core = 7.x
+
+configure = admin/config/development/stylus

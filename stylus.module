@@ -1,11 +1,41 @@
 <?php
 
+define('STYLUS_PERMISSION', 'administer stylus');
+
+function stylus_menu() {
+  $items = array();
+
+  $items['admin/config/development/stylus'] = array(
+    'title' => 'Stylus settings',
+    'description' => 'Administer Stylus settings',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('stylus_settings'),
+    'access arguments' => array(STYLUS_PERMISSION),
+    'file' => 'stylus.admin.inc',
+    'type' => MENU_NORMAL_ITEM,
+  );
+
+  return $items;
+}
+
+function stylus_permission() {
+  return array(
+    STYLUS_PERMISSION => array(
+      'title' => t('Administer Stylus'),
+      'description' => t('Access the stylus settings page.'),
+    ),
+  );
+}
+
 function stylus_preprocess_page(&$variables) {
 
   global $theme_info;
 
-  $development = variable_get('stylus_development_mode', TRUE);
+  $development = variable_get('stylus_devel', FALSE);
+  $force = variable_get('stylus_force', FALSE);
+
   $theme_path = drupal_get_path('theme', $theme_info->name);
+  $css_dir = variable_get('stylus_css_dir', NULL);
 
   // Do we have any stylesheets defined in the theme .info
   if (isset($theme_info->info['stylus'])) {
@@ -14,7 +44,7 @@ function stylus_preprocess_page(&$variables) {
     $stylus_stylesheets = $theme_info->info['stylus'];
 
     // Compile only if in development mode
-    if ($development) {
+    if ($development || $force) {
 
       $compile = array();
 
@@ -30,48 +60,95 @@ function stylus_preprocess_page(&$variables) {
       }
       
       // Compile stylesheets
-      stylus_compile($compile);
+      $success = stylus_compile($compile, $css_dir);
     }
 
     // Iterate through media types
     foreach($stylus_stylesheets as $media => $stylesheets) { 
 
-      // Add all generated css stylesheets
-      array_walk($stylesheets, function(&$path) use ($theme_path, $media) {
-        drupal_add_css($theme_path . '/' . stylus_css_path($path), array(
+      // Add all compiled stylesheets
+      foreach($stylesheets as $stylesheet) {
+        
+        // Set the css path either to settings defined directory or the same directory as the stylus file
+        $path = $css_dir ? $css_dir : $theme_path . '/' . dirname($stylesheet);
+
+        drupal_add_css($path . '/' . stylus_css_path($stylesheet), array(
           'group' => CSS_THEME,
           'every_page' => TRUE,
           'media' => "$media",
         ));
-      });
+      }
     }
   }
 }
 
-function stylus_css_path($path) {
-   return preg_replace("/styl$/", 'css', $path);
+function stylus_add_stylus($data = NULL, $options = NULL) {
+
+  if (isset($options['css_dir'])) {
+    $css_dir = $options['css_dir'];
+    unset($options['css_dir']);
+  }
+  else {
+    $css_dir = variable_get('stylus_css_dir', NULL);
+  }
+
+  $success = stylus_compile(array($data), $css_dir);
+
+  $path = $css_dir ? $css_dir : dirname($data);
+  drupal_add_css($path . '/' . stylus_css_path($data), $options);
 }
 
-function stylus_compile($stylesheets) {
+function stylus_css_path($path) {
+   return basename($path, 'styl') . 'css';
+}
+
+function stylus_compile($stylesheets, $output_dir = NULL) {
   
   // Absolute filesystem path
   $fs_path = $_SERVER['DOCUMENT_ROOT'] . base_path();
 
+  // Settings
+  $stylus_settings = variable_get('stylus_binary', array());
+
+  $stylus_binary = (!empty($stylus_settings['path'])) ? $stylus_settings['path'] : 'stylus';
+  $stylus_nib = (!empty($stylus_settings['nib'])) ? $stylus_settings['nib'] : '';
+
+  // If a CSS path is used check if it's writable
+  if (!empty($output_dir)) {
+    $is_writable = is_writable($output_dir);
+
+    // The path is not writeable, exit.
+    if (!$is_writable) {
+      $message = t('The CSS directory, %path, defined for stylus module does not exist or is not writeable.', array('%path' => $fs_path . $output_dir));
+      if (user_access(STYLUS_PERMISSION)) {
+        drupal_set_message($message, 'error');
+      }
+      watchdog('Stylus', $message, array(), WATCHDOG_ERROR);
+      return FALSE;
+    }
+  }
 
   // Checking if we have any stylesheets and if stylus is available
-  if (count($stylesheets) > 0 && strlen(exec('stylus -V') > 0)) {
+  if (count($stylesheets) > 0 && strlen(exec(escapeshellcmd($stylus_binary . ' -V'))) > 0) {
 
     $file_paths = array();
+    $force = variable_get('stylus_force', FALSE);
     
     // Iterate through stylesheets
     foreach ($stylesheets as $stylus_stylesheet) {
-      $css_stylesheet = stylus_css_path($stylus_stylesheet); 
+
+      // Use the same directory if none is specified
+      if (empty($output_dir)) {
+        $output_dir = dirname($stylus_stylesheet);
+      }
+
+      $css_stylesheet = $fs_path . $output_dir . '/' . stylus_css_path($stylus_stylesheet); 
 
       // Do we have a css file or has the stylus file been modified after last compile
-      // TODO: Dev mode should ignore this check as some files might be included with @import
-      //if (!file_exists($css_stylesheet) || (file_exists($stylus_stylesheet) && filemtime($stylus_stylesheet) > filemtime($css_stylesheet))) {
+      // Force setting also applies here.
+      if (!file_exists($css_stylesheet) || (file_exists($stylus_stylesheet) && filemtime($stylus_stylesheet) > filemtime($css_stylesheet)) || $force) {
         $file_paths[] = $fs_path . $stylus_stylesheet;
-      //}
+      }
     }
 
     // Are there any files to be compiled
@@ -79,13 +156,35 @@ function stylus_compile($stylesheets) {
       
       // Stylus response
       $response = array();
-      $nib = ' --use /home/oxy/node_modules/nib/lib/nib';
+
+      // Nib module
+      $stylus_nib = !empty($stylus_nib) ? ' --use ' . trim($stylus_nib) : '';
+
+      $output = ($output_dir && $is_writable) ? ' --out ' . $fs_path . $output_dir : '';
 
       // Generate CSS stylesheet
-      exec('stylus ' . escapeshellcmd(implode($file_paths, " ") . $nib) . ' 2>&1', $response);
+      exec(escapeshellcmd($stylus_binary . ' ' . implode($file_paths, " ") . $stylus_nib . $output) . ' 2>&1', $response);
 
-      drupal_set_message( implode($response, "<br/>") );
+      array_walk($response, function(&$line) use(&$response) {
+
+        // No such file or directory
+        if (preg_match("/^Error:\ ENOENT/", $line)) {
+          if (user_access(STYLUS_PERMISSION)) {
+            drupal_set_message($line, 'error');
+          }
+          watchdog('Stylus', $line, array(), WATCHDOG_ERROR);
+          $response = array();
+        }
+        
+        // Success
+        $line = preg_replace("/^[^9]*90mcompiled[^0]*0m/", t('Stylus compiled: '), $line);
+      });
+
+      if (user_access(STYLUS_PERMISSION)) {
+        drupal_set_message(implode($response, "<br/>"), 'status');
+      }
     }
   }
 
+  return TRUE;
 }
